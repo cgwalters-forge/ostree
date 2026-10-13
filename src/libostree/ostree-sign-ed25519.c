@@ -159,7 +159,7 @@ ostree_sign_ed25519_data (OstreeSign *self, GBytes *data, GBytes **signature,
   /* These return 1 on success; a failure may be reported as 0 or as a
    * negative value, so only 1 may be treated as success.
    */
-  size_t len;
+  size_t len = OSTREE_SIGN_ED25519_SIG_SIZE;
   if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey) == 1
       && EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data))
              == 1)
