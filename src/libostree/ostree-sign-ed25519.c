@@ -156,9 +156,13 @@ ostree_sign_ed25519_data (OstreeSign *self, GBytes *data, GBytes **signature,
       return glnx_throw (error, "openssl: Failed to initialize ed25519 key");
     }
 
+  /* These return 1 on success; a failure may be reported as 0 or as a
+   * negative value, so only 1 may be treated as success.
+   */
   size_t len;
-  if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey)
-      && EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data)))
+  if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey) == 1
+      && EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data))
+             == 1)
     sig_size = len;
 
   EVP_PKEY_free (pkey);
