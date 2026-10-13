@@ -16,7 +16,7 @@ if test -z "${OSTREE_UNINSTALLED_SRCDIR:-}"; then
 fi
 
 coccitests=$(ls $(dirname $0)/coccinelle/*.cocci)
-echo "1.."$(echo ${coccitests} | wc -l)
+echo "1.."$(echo ${coccitests} | wc -w)
 
 for cocci in $(dirname $0)/coccinelle/*.cocci; do
     echo "Running: ${cocci}"
