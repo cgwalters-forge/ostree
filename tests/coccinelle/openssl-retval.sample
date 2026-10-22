@@ -1,0 +1,59 @@
+/* Sample for openssl-retval.cocci, which has to flag exactly the marked
+ * lines.  This is never compiled.
+ */
+
+static int
+sample_ok (EVP_MD_CTX *ctx, EVP_PKEY *pkey, const unsigned char *sig, size_t len)
+{
+  if (EVP_DigestVerifyInit (ctx, NULL, NULL, NULL, pkey) == 1
+      && EVP_DigestVerify (ctx, sig, len, sig, len) == 1)
+    return 1;
+  if (EVP_DigestVerify (ctx, sig, len, sig, len) != 1)
+    return 0;
+  bool ok = EVP_PKEY_verify_init (NULL) == 1;
+  g_assert (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey) == 1);
+  return ok;
+}
+
+static int
+sample_bad (EVP_MD_CTX *ctx, EVP_PKEY *pkey, unsigned char *sig, size_t len)
+{
+  if (EVP_DigestVerify (ctx, sig, len, sig, len)) /* MUST-FLAG */
+    return 1;
+  if (!EVP_DigestVerify (ctx, sig, len, sig, len)) /* MUST-FLAG */
+    return 0;
+  if (EVP_DigestVerify (ctx, sig, len, sig, len) != 0) /* MUST-FLAG */
+    return 1;
+  if (EVP_DigestVerify (ctx, sig, len, sig, len) == 0) /* MUST-FLAG */
+    return 0;
+  if (EVP_DigestVerifyInit (ctx, NULL, NULL, NULL, pkey) /* MUST-FLAG */
+      && EVP_DigestVerify (ctx, sig, len, sig, len) == 1)
+    return 1;
+  if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey) == 1
+      && EVP_DigestSign (ctx, sig, &len, sig, len)) /* MUST-FLAG */
+    return 1;
+  int r = EVP_DigestVerify (ctx, sig, len, sig, len); /* MUST-FLAG */
+  r = X509_verify (NULL, pkey); /* MUST-FLAG */
+  g_assert (EVP_PKEY_verify (NULL, sig, len, sig, len)); /* MUST-FLAG */
+  EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey); /* MUST-FLAG */
+  if (1 == RAND_bytes (sig, len))
+    return 1;
+  return r ? EVP_PKEY_sign_init (NULL) : 0; /* MUST-FLAG */
+}
+
+#if defined(USE_LIBSODIUM)
+static int
+sample_ifdef (void)
+{
+  return 0;
+}
+#elif defined(USE_OPENSSL)
+static int
+sample_ifdef (EVP_MD_CTX *ctx, unsigned char *sig, size_t len)
+{
+  g_autofree guchar *buf = NULL;
+  if (EVP_DigestSign (ctx, sig, &len, sig, len)) /* MUST-FLAG */
+    return 1;
+  return 0;
+}
+#endif
