@@ -134,6 +134,22 @@ clang-format:
 clang-format-check:
     {{sourcefiles}} | xargs clang-format -i --Werror --dry-run
 
+# Check source files against the semantic patches in tests/coccinelle/;
+# any match is a failure. Also run by tests/coccinelle.sh in `make check`.
+coccinelle-check:
+    #!/bin/bash
+    set -euo pipefail
+    rc=0
+    for cocci in tests/coccinelle/*.cocci; do
+        out=$(spatch --very-quiet --dir . "${cocci}")
+        if test -n "${out}"; then
+            echo "${out}"
+            echo "error: Failed semantic patch: ${cocci}" 1>&2
+            rc=1
+        fi
+    done
+    exit $rc
+
 clippy_config := "-A clippy::all -D clippy::correctness -D clippy::suspicious -Dunused_imports -Ddead_code"
 cargo_project_features := env('CARGO_PROJECT_FEATURES', 'v2022_6')
 
