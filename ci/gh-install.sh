@@ -109,6 +109,9 @@ case "$ID" in
 
         # Additional common packages:
         #
+        # coccinelle - To run the semantic patches in tests/coccinelle,
+        # which are otherwise skipped.
+        #
         # gjs - To allow running JS tests even though this has been
         # disabled in Debian for a while.
         #
@@ -121,6 +124,7 @@ case "$ID" in
         # systemd - To get the unit and generator paths from systemd.pc
         # rather than passing them as configure options.
         PACKAGES+=(
+            coccinelle
             gjs
             gnome-desktop-testing
             libcurl4-openssl-dev
