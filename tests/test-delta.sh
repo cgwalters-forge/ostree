@@ -26,7 +26,7 @@ skip_without_user_xattrs
 bindatafiles="bash true ostree"
 morebindatafiles="false ls"
 
-echo '1..14'
+echo '1..15'
 
 mkdir repo
 ostree_repo_init repo --mode=archive
@@ -35,6 +35,9 @@ mkdir files
 for bin in ${bindatafiles}; do
     cp $(which ${bin}) files
 done
+# Keep the initial delta's fallback behavior covered without depending on the
+# sizes of binaries supplied by the test host.
+dd if=/dev/zero of=files/large-content bs=1M count=5 status=none
 
 ${CMD_PREFIX} ostree --repo=repo commit -b test -s test --tree=dir=files
 
@@ -81,7 +84,7 @@ get_assert_one_direntry_matching() {
 
 origrev=$(${CMD_PREFIX} ostree --repo=repo rev-parse test)
 
-${CMD_PREFIX} ostree --repo=repo static-delta generate --empty --to=${origrev}
+${CMD_PREFIX} ostree --repo=repo static-delta generate --empty --to=${origrev} --min-fallback-size=0
 ${CMD_PREFIX} ostree --repo=repo static-delta generate --if-not-exists --empty --to=${origrev} > out.txt
 assert_file_has_content out.txt "${origrev} already exists"
 ${CMD_PREFIX} ostree --repo=repo static-delta list | grep ${origrev} || exit 1
@@ -93,6 +96,10 @@ ${CMD_PREFIX} ostree --repo=repo static-delta indexes | wc -l > indexcount
 assert_file_has_content indexcount "^1$"
 ${CMD_PREFIX} ostree --repo=repo static-delta indexes | grep ${origrev} || exit 1
 
+# The large object makes the from-empty delta exercise the no-fallback path.
+# Do not include it in the bsdiff fixture below: bsdiff's CPU cost scales
+# poorly for an otherwise uninteresting all-zero input.
+rm files/large-content
 permuteDirectory 1 files
 ${CMD_PREFIX} ostree --repo=repo commit -b test -s test --tree=dir=files
 
@@ -260,6 +267,21 @@ assert_str_match "${part0_meta_empty}" "nobjects=0"
 assert_streq "${totalsize_empty}" "Total Uncompressed Size: 0 (0 bytes)"
 
 echo 'ok generate + show empty delta part'
+
+rm -rf repo3
+ostree_repo_init repo3 --mode=archive
+${CMD_PREFIX} ostree --repo=repo3 pull-local repo ${newrev} ${samerev}
+${CMD_PREFIX} ostree --repo=repo3 static-delta generate --from=${newrev} --to=${samerev}
+deltaprefix=$(get_assert_one_direntry_matching repo3/deltas '.')
+deltadir=$(get_assert_one_direntry_matching repo3/deltas/${deltaprefix} '-')
+truncate -s 0 repo3/deltas/${deltaprefix}/${deltadir}/0
+if ${CMD_PREFIX} ostree --repo=repo3 static-delta show ${newrev}-${samerev} 2> err.txt; then
+    assert_not_reached "static-delta show with a zero-length part unexpectedly succeeded"
+fi
+assert_file_has_content err.txt "Empty static delta part"
+rm -rf repo3
+
+echo 'ok show zero-length delta part file'
 
 ${CMD_PREFIX} ostree --repo=repo summary -u
 

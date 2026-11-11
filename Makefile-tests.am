@@ -47,7 +47,7 @@ endif
 uninstalled_test_data = tests/ostree-symlink-stamp tests/ostree-prepare-root-symlink-stamp \
 			tests/ostree-remount-symlink-stamp
 
-dist_uninstalled_test_scripts = tests/test-symbols.sh tests/coccinelle.sh
+dist_uninstalled_test_scripts = tests/test-symbols.sh tests/coccinelle.sh tests/test-delta-fallocate.sh
 
 # This logic implements ENABLE_INSTALLED_TESTS_EXCLUSIVE; see below.
 # The goal here if installed tests are enabled, we explicitly make the
@@ -202,7 +202,9 @@ tests_repo_finder_mount_SOURCES = tests/repo-finder-mount.c
 tests_repo_finder_mount_CFLAGS = $(common_tests_cflags)
 tests_repo_finder_mount_LDADD = $(common_tests_ldadd) libostreetest.la
 
-fuse_tests = tests/test-rofiles-fuse.sh
+fuse_tests = \
+	tests/test-delta-fuse.sh \
+	tests/test-rofiles-fuse.sh
 if BUILDOPT_FUSE
 _installed_or_uninstalled_test_scripts += $(fuse_tests)
 uninstalled_test_data += tests/rofiles-fuse-symlink-stamp
@@ -311,6 +313,10 @@ if USE_AVAHI
 test_programs += tests/test-repo-finder-avahi
 endif
 
+if USE_CURL_OR_SOUP
+test_programs += tests/test-fetcher-uri
+endif
+
 # An interactive tool
 noinst_PROGRAMS += tests/test-rollsum-cli
 
@@ -340,6 +346,12 @@ tests_test_rollsum_LDADD = $(bupsplitpath) $(TESTS_LDADD) $(OT_DEP_ZLIB_LIBS)
 tests_test_bloom_SOURCES = src/libostree/ostree-bloom.c tests/test-bloom.c
 tests_test_bloom_CFLAGS = $(TESTS_CFLAGS)
 tests_test_bloom_LDADD = $(TESTS_LDADD)
+
+if USE_CURL_OR_SOUP
+tests_test_fetcher_uri_SOURCES = src/libostree/ostree-fetcher-uri.c tests/test-fetcher-uri.c
+tests_test_fetcher_uri_CFLAGS = $(TESTS_CFLAGS)
+tests_test_fetcher_uri_LDADD = $(TESTS_LDADD)
+endif
 
 tests_test_include_ostree_h_SOURCES = tests/test-include-ostree-h.c
 # Don't use TESTS_CFLAGS so we test if the public header can be included by external programs
