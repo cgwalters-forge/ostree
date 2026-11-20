@@ -119,9 +119,10 @@ read_varuint64 (StaticDeltaExecutionState *state, guint64 *out_value, GError **e
 static gboolean
 open_output_target (StaticDeltaExecutionState *state, GCancellable *cancellable, GError **error)
 {
-  g_assert (state->checksums != NULL);
-  g_assert (state->output_target == NULL);
-  g_assert (state->checksum_index < state->n_checksums);
+  if (G_UNLIKELY (state->checksums == NULL || state->output_target != NULL
+                  || state->checksum_index >= state->n_checksums))
+    return glnx_throw (error, "Invalid static delta op stream: object index %u out of %u",
+                       state->checksum_index, state->n_checksums);
 
   guint8 *objcsum
       = (guint8 *)state->checksums + (state->checksum_index * OSTREE_STATIC_DELTA_OBJTYPE_CSUM_LEN);
@@ -266,6 +267,9 @@ _ostree_static_delta_part_execute (OstreeRepo *repo, GVariant *objects, GVariant
   ret = TRUE;
 out:
   _ostree_repo_bare_content_cleanup (&state->content_out);
+  glnx_close_fd (&state->read_source_fd);
+  g_clear_pointer (&state->read_source_object, g_free);
+  g_clear_pointer (&state->xattrs, g_variant_unref);
   return ret;
 }
 
@@ -423,11 +427,9 @@ dispatch_bspatch (OstreeRepo *repo, StaticDeltaExecutionState *state, GCancellab
       if (!input_mfile)
         return FALSE;
 
-      /* Guard against integer truncation on 32-bit systems: g_malloc0() takes
-       * gsize which is 32-bit on those platforms, but bspatch() uses the full
-       * int64_t newsize.  Without this check a crafted content_size > G_MAXSIZE
-       * would allocate a truncated (small) buffer while bspatch() writes using
-       * the full 64-bit value, causing a heap buffer overflow.
+      /* Guard against integer truncation on 32-bit systems: allocation and
+       * mapping sizes use gsize while bspatch() uses int64_t. Without this check
+       * the output buffer and the size used by bspatch() could differ.
        * (CVE / RHEL-189207, CWE-680, CWE-122)
        */
       if (G_UNLIKELY (state->content_size > G_MAXSIZE || state->content_size > (guint64)G_MAXINT64))
@@ -439,10 +441,30 @@ dispatch_bspatch (OstreeRepo *repo, StaticDeltaExecutionState *state, GCancellab
           return FALSE;
         }
 
-      const gsize alloc_size = (gsize)state->content_size;
-      const int64_t newsize = (int64_t)state->content_size;
+      guint8 *buf;
+      size_t buflen = (size_t)state->content_size;
+      g_autofree guint8 *heap_buf = NULL;
+      const gboolean heap_output
+          = repo->is_on_fuse || (repo->test_error_flags & OSTREE_REPO_TEST_ERROR_DISABLE_MMAP) != 0;
 
-      g_autofree guchar *buf = g_malloc0 (alloc_size);
+      /* revokefs enables FUSE direct I/O for writable files. The kernel does
+       * not allow MAP_SHARED mappings of those files. The test-only
+       * disable-mmap flag exercises this output path; the BSPATCH source is
+       * still read through its read-only mapping above.
+       */
+      if (heap_output)
+        {
+          heap_buf = g_try_malloc (MAX (buflen, (size_t)1));
+          if (!heap_buf)
+            return glnx_throw (error,
+                               "Unable to allocate %" G_GSIZE_FORMAT
+                               " bytes for static delta bspatch output",
+                               buflen);
+          buf = heap_buf;
+        }
+      else if (!_ostree_repo_bare_content_map (&state->content_out, &buf, &buflen, cancellable,
+                                               error))
+        return FALSE;
 
       struct bzpatch_opaque_s opaque;
       opaque.state = state;
@@ -452,12 +474,17 @@ dispatch_bspatch (OstreeRepo *repo, StaticDeltaExecutionState *state, GCancellab
       stream.read = bspatch_read;
       stream.opaque = &opaque;
       if (bspatch ((const guint8 *)g_mapped_file_get_contents (input_mfile),
-                   g_mapped_file_get_length (input_mfile), buf, newsize, &stream)
+                   g_mapped_file_get_length (input_mfile), buf, (int64_t)buflen, &stream)
           < 0)
         return glnx_throw (error, "bsdiff patch failed");
 
-      if (!_ostree_repo_bare_content_write (repo, &state->content_out, buf, state->content_size,
-                                            cancellable, error))
+      if (heap_output)
+        {
+          if (!_ostree_repo_bare_content_write (repo, &state->content_out, buf, buflen, cancellable,
+                                                error))
+            return FALSE;
+        }
+      else if (!_ostree_repo_bare_content_finish_mapped (&state->content_out, cancellable, error))
         return FALSE;
     }
 
@@ -602,13 +629,12 @@ dispatch_open (OstreeRepo *repo, StaticDeltaExecutionState *state, GCancellable 
 {
   GLNX_AUTO_PREFIX_ERROR ("opcode open", error);
 
-  g_assert (state->output_target == NULL);
+  if (state->output_target != NULL)
+    return glnx_throw (error, "Static delta opcode open while another object is open");
   /* FIXME - lift this restriction */
-  if (!state->stats_only)
-    {
-      g_assert (repo->mode == OSTREE_REPO_MODE_BARE || repo->mode == OSTREE_REPO_MODE_BARE_USER
-                || repo->mode == OSTREE_REPO_MODE_BARE_USER_ONLY);
-    }
+  if (!state->stats_only && repo->mode != OSTREE_REPO_MODE_BARE
+      && repo->mode != OSTREE_REPO_MODE_BARE_USER && repo->mode != OSTREE_REPO_MODE_BARE_USER_ONLY)
+    return glnx_throw (error, "Static delta opcode open requires a bare repository");
 
   if (!open_output_target (state, cancellable, error))
     return FALSE;

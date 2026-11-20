@@ -139,12 +139,15 @@ ostree_sign_spki_data (OstreeSign *self, GBytes *data, GBytes **signature,
   unsigned long long sig_size = 0;
   g_autofree guchar *sig = NULL;
 
+  /* Both calls return 1 on success, and 0 or a negative value on failure. */
   size_t len;
-  if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey)
-      && EVP_DigestSign (ctx, NULL, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data)))
+  if (EVP_DigestSignInit (ctx, NULL, NULL, NULL, pkey) == 1
+      && EVP_DigestSign (ctx, NULL, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data))
+             == 1)
     {
       sig = g_malloc0 (len);
-      if (EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data)))
+      if (EVP_DigestSign (ctx, sig, &len, g_bytes_get_data (data, NULL), g_bytes_get_size (data))
+          == 1)
         sig_size = len;
     }
 
@@ -448,7 +451,7 @@ _spki_add_revoked (OstreeSign *self, GVariant *revoked_key, GError **error)
   g_debug ("Read spki revoked key = %s", hex);
 
   g_autoptr (GBytes) key_bytes = g_bytes_new_static (key, n_elements);
-  if (g_list_find_custom (sign->revoked_keys, key, g_bytes_compare) == NULL)
+  if (g_list_find_custom (sign->revoked_keys, key_bytes, g_bytes_compare) == NULL)
     {
       GBytes *new_key_bytes = g_bytes_new (key, n_elements);
       sign->revoked_keys = g_list_prepend (sign->revoked_keys, new_key_bytes);

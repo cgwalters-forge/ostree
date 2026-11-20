@@ -613,10 +613,19 @@ ostree_content_stream_parse (gboolean compressed, GInputStream *input, guint64 i
   g_autofree guchar *buf = g_malloc (archive_header_size);
   if (!g_input_stream_read_all (input, buf, archive_header_size, &bytes_read, cancellable, error))
     return FALSE;
+  /* Parse the header as untrusted regardless of @trusted: @trusted refers to the
+   * file content, which is not part of this variant, whereas these header bytes
+   * come straight off disk/the network.  A trusted variant skips normal-form
+   * validation, so a crafted header with a non-NUL-terminated symlink target
+   * would be read out of bounds when file_header_parse() hands the string to
+   * g_file_info_set_attribute_byte_string() (strdup).  The header is small, so
+   * validating it is cheap. */
   g_autoptr (GVariant) file_header = g_variant_ref_sink (g_variant_new_from_data (
       compressed ? _OSTREE_ZLIB_FILE_HEADER_GVARIANT_FORMAT : _OSTREE_FILE_HEADER_GVARIANT_FORMAT,
-      buf, archive_header_size, trusted, g_free, buf));
+      buf, archive_header_size, FALSE, g_free, buf));
   buf = NULL;
+  if (!g_variant_is_normal_form (file_header))
+    return glnx_throw (error, "Corrupted archive file; invalid header");
   g_autoptr (GFileInfo) ret_file_info = NULL;
   g_autoptr (GVariant) ret_xattrs = NULL;
   if (compressed)
@@ -2235,6 +2244,10 @@ ostree_validate_structureof_dirtree (GVariant *dirtree, GError **error)
   g_autoptr (GVariant) content_csum_v = NULL;
   g_autoptr (GVariant) meta_csum_v = NULL;
   g_autoptr (GVariantIter) contents_iter = NULL;
+  /* A name must not appear twice, in particular not as both a file and a
+   * subdirectory: checkout would create the file (possibly a symlink) and
+   * then open it as the subdirectory. */
+  g_autoptr (GHashTable) names = g_hash_table_new (g_str_hash, g_str_equal);
 
   if (!validate_variant (dirtree, OSTREE_TREE_GVARIANT_FORMAT, error))
     return FALSE;
@@ -2245,6 +2258,8 @@ ostree_validate_structureof_dirtree (GVariant *dirtree, GError **error)
     {
       if (!ot_util_filename_validate (filename, error))
         return FALSE;
+      if (!g_hash_table_add (names, (char *)filename))
+        return glnx_throw (error, "Duplicate name in dirtree: %s", filename);
       if (!ostree_validate_structureof_csum_v (content_csum_v, error))
         return FALSE;
     }
@@ -2261,6 +2276,8 @@ ostree_validate_structureof_dirtree (GVariant *dirtree, GError **error)
     {
       if (!ot_util_filename_validate (filename, error))
         return FALSE;
+      if (!g_hash_table_add (names, (char *)filename))
+        return glnx_throw (error, "Duplicate name in dirtree: %s", filename);
       if (!ostree_validate_structureof_csum_v (content_csum_v, error))
         return FALSE;
       if (!ostree_validate_structureof_csum_v (meta_csum_v, error))
@@ -2536,7 +2553,9 @@ static gboolean
 read_sizes_entry (GVariant *entry, OstreeCommitSizesEntry **out_sizes, GError **error)
 {
   gsize entry_size = g_variant_get_size (entry);
-  g_return_val_if_fail (entry_size >= OSTREE_SHA256_DIGEST_LEN + 2, FALSE);
+  if (entry_size < OSTREE_SHA256_DIGEST_LEN + 2)
+    return glnx_throw (error, "Invalid ostree.sizes metadata entry of length %" G_GSIZE_FORMAT,
+                       entry_size);
 
   const guchar *buffer = g_variant_get_data (entry);
   if (buffer == NULL)

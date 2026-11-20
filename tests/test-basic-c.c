@@ -499,6 +499,33 @@ test_big_metadata (void)
 }
 
 static void
+test_commit_sizes_short_entry (void)
+{
+  g_autoptr (GError) error = NULL;
+
+  /* An ostree.sizes entry shorter than a checksum plus two varints */
+  const guint8 short_entry[] = { 0x01 };
+  g_autoptr (GVariantBuilder) sizes = g_variant_builder_new (G_VARIANT_TYPE ("aay"));
+  g_variant_builder_add_value (
+      sizes, g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, short_entry, sizeof (short_entry), 1));
+  g_autoptr (GVariantBuilder) metadata = g_variant_builder_new (G_VARIANT_TYPE ("a{sv}"));
+  g_variant_builder_add (metadata, "{sv}", "ostree.sizes", g_variant_builder_end (sizes));
+
+  const guint8 csum[OSTREE_SHA256_DIGEST_LEN] = { 0 };
+  g_autoptr (GVariant) commit = g_variant_ref_sink (g_variant_new (
+      "(@a{sv}@ay@a(say)sst@ay@ay)", g_variant_builder_end (metadata),
+      g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, NULL, 0, 1),
+      g_variant_new_array (G_VARIANT_TYPE ("(say)"), NULL, 0), "subject", "body", (guint64)0,
+      g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, csum, sizeof (csum), 1),
+      g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, csum, sizeof (csum), 1)));
+
+  g_autoptr (GPtrArray) entries = NULL;
+  g_assert (!ostree_commit_get_object_sizes (commit, &entries, &error));
+  g_assert_error (error, G_IO_ERROR, G_IO_ERROR_FAILED);
+  g_assert_null (entries);
+}
+
+static void
 compare_xattrs (GVariant *orig, GVariant *new)
 {
   g_assert_cmpint (g_variant_n_children (orig) + 1, ==, g_variant_n_children (new));
@@ -606,6 +633,37 @@ test_dirmeta_xattrs (void)
   g_autoptr (GVariant) dup_dirmeta
       = g_variant_new ("(uuu@a(ayay))", uidgid, uidgid, mode, g_variant_builder_end (dup_builder));
   g_assert (!ostree_validate_structureof_dirmeta (dup_dirmeta, error));
+  g_assert_error (local_error, G_IO_ERROR, G_IO_ERROR_FAILED);
+}
+
+static GVariant *
+new_test_dirtree (const char *file_name, const char *dir_name)
+{
+  const guint8 csum[OSTREE_SHA256_DIGEST_LEN] = { 0 };
+  g_autoptr (GVariantBuilder) files = g_variant_builder_new (G_VARIANT_TYPE ("a(say)"));
+  g_autoptr (GVariantBuilder) dirs = g_variant_builder_new (G_VARIANT_TYPE ("a(sayay)"));
+  g_variant_builder_add (files, "(s@ay)", file_name,
+                         g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, csum, sizeof (csum), 1));
+  g_variant_builder_add (dirs, "(s@ay@ay)", dir_name,
+                         g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, csum, sizeof (csum), 1),
+                         g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, csum, sizeof (csum), 1));
+  return g_variant_ref_sink (g_variant_new ("(@a(say)@a(sayay))", g_variant_builder_end (files),
+                                            g_variant_builder_end (dirs)));
+}
+
+static void
+test_dirtree_duplicate_name (void)
+{
+  g_autoptr (GError) local_error = NULL;
+  GError **error = &local_error;
+
+  g_autoptr (GVariant) dirtree = new_test_dirtree ("foo", "bar");
+  g_assert (ostree_validate_structureof_dirtree (dirtree, error));
+  g_assert_no_error (local_error);
+
+  /* A name listed as both a file and a subdirectory must be rejected */
+  g_autoptr (GVariant) dup_dirtree = new_test_dirtree ("foo", "foo");
+  g_assert (!ostree_validate_structureof_dirtree (dup_dirtree, error));
   g_assert_error (local_error, G_IO_ERROR, G_IO_ERROR_FAILED);
 }
 
@@ -768,8 +826,10 @@ main (int argc, char **argv)
   g_test_add_func ("/break-hardlink", test_break_hardlink);
   g_test_add_func ("/remotename", test_validate_remotename);
   g_test_add_func ("/big-metadata", test_big_metadata);
+  g_test_add_func ("/commit-sizes-short-entry", test_commit_sizes_short_entry);
   g_test_add_func ("/read-xattrs", test_read_xattrs);
   g_test_add_func ("/dirmeta-xattrs", test_dirmeta_xattrs);
+  g_test_add_func ("/dirtree-duplicate-name", test_dirtree_duplicate_name);
   g_test_add_func ("/list-static-delta-entries", test_list_static_delta_entries);
 
   return g_test_run ();
