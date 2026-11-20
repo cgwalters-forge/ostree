@@ -4,7 +4,7 @@ dn=$(dirname $0)
 n=0
 for case in ${dn}/test-*; do
   echo "Running: $case"
-  $case
+  bash $case
   echo "ok $case"
   n=$(($n+1))
 done

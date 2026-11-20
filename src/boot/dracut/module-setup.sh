@@ -49,4 +49,9 @@ install() {
     mkdir -p "${initdir}${systemdsystemunitdir}/initrd-root-fs.target.wants"
     ln_r "${systemdsystemunitdir}/ostree-prepare-root.service" \
         "${systemdsystemunitdir}/initrd-root-fs.target.wants/ostree-prepare-root.service"
+    # Expose /boot to the fips module's kernel HMAC check (pre-pivot 01)
+    if dracut_module_included "fips"; then
+        inst_hook pre-pivot 00 "$moddir/ostree-fips-boot-mount.sh"
+        inst_hook pre-pivot 02 "$moddir/ostree-fips-boot-umount.sh"
+    fi
 }

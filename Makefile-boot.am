@@ -20,7 +20,10 @@
 if BUILDOPT_DRACUT
 # Not using $(libdir) here is intentional, dracut modules go in prefix/lib
 dracutmoddir = $(prefix)/lib/dracut/modules.d/50ostree
-dracutmod_SCRIPTS = src/boot/dracut/module-setup.sh
+dracutmod_SCRIPTS = src/boot/dracut/module-setup.sh \
+	src/boot/dracut/ostree-fips-boot-mount.sh \
+	src/boot/dracut/ostree-fips-boot-umount.sh \
+	$(NULL)
 endif
 if BUILDOPT_DRACUT_CONF
 dracutconfdir = $(sysconfdir)/dracut.conf.d
@@ -64,6 +67,8 @@ ostree_boot_SCRIPTS += src/boot/grub2/ostree-grub-generator
 endif
 
 EXTRA_DIST += src/boot/dracut/module-setup.sh \
+	src/boot/dracut/ostree-fips-boot-mount.sh \
+	src/boot/dracut/ostree-fips-boot-umount.sh \
 	src/boot/dracut/ostree.conf \
 	src/boot/mkinitcpio \
 	src/boot/ostree-boot-complete.service \
