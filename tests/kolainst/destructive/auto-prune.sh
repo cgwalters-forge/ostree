@@ -55,8 +55,12 @@ if test $((${total_blocks} * ${block_size})) -lt ${required_bootdata_size}; then
     # Make a new loopback-mounted /boot that's large enough
     bootimg=/var/tmp/boot.img
     truncate -s ${required_bootdata_size} ${bootimg}
-    # Be sure to mirror existing block size
-    mkfs.ext4 -b ${block_size} ${bootimg}
+    # Be sure to mirror existing block size. Since e2fsprogs 1.47.4 the
+    # default orphan file can exceed what the kernel accepts with 1k blocks
+    # (512k), and the mount fails with EUCLEAN; cap it. Older mke2fs without
+    # the orphan_file feature rejects the option, so fall back to the plain call.
+    mkfs.ext4 -b ${block_size} -E orphan_file_size=512K ${bootimg} \
+        || mkfs.ext4 -b ${block_size} ${bootimg}
     mount -o loop ${bootimg} /var/mnt
     # Copy existing boot data
     cp -a /boot/* /var/mnt
